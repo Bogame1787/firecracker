@@ -394,6 +394,28 @@ impl MMIODeviceManager {
         Ok(())
     }
 
+    pub fn virtio_devices_by_type(
+        &self,
+        filter_type: VirtioDeviceType,
+    ) -> Vec<Arc<Mutex<dyn VirtioDevice>>> {
+        self.virtio_devices
+            .iter()
+            .filter_map(|((device_type, _), mmio_device)| {
+                if *device_type == filter_type {
+                    Some(
+                        mmio_device
+                            .inner
+                            .lock()
+                            .expect("Poisoned lock")
+                            .device(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Gets the specified device.
     pub fn get_virtio_device(
         &self,

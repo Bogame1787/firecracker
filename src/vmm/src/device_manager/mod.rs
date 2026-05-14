@@ -379,6 +379,17 @@ impl DeviceManager {
         }
     }
 
+    pub fn virtio_devices_by_type(
+        &self,
+        device_type: VirtioDeviceType,
+    ) -> Vec<Arc<Mutex<dyn VirtioDevice>>> {
+        if self.is_pci_enabled() {
+            self.pci_devices.virtio_devices_of_type(device_type)
+        } else {
+            self.mmio_devices.virtio_devices_of_type(device_type)
+        }
+    }
+
     /// Run fn `f()` for the virtio device matching `virtio_type` and `id`.
     pub fn with_virtio_device<T, F, R>(&self, id: &str, f: F) -> Result<R, FindDeviceError>
     where

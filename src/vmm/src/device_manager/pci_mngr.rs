@@ -72,7 +72,6 @@ impl PciDevices {
         Default::default()
     }
 
-    pub fn attach_pci_segment(&mut self, vm: &Arc<Vm>) -> Result<(), PciManagerError> {
         // We only support a single PCIe segment. Calling this function twice is a Firecracker
         // internal error.
         assert!(self.pci_segment.is_none());
@@ -223,6 +222,27 @@ impl PciDevices {
     ) -> Option<&Arc<Mutex<VirtioPciDevice>>> {
         self.virtio_devices
             .get(&(device_type, device_id.to_string()))
+    }
+
+    pub fn virtio_devices_by_type(
+        &self,
+        filter_type: VirtioDeviceType,
+    ) -> Vec<Arc<Mutex<dyn VirtioDevice>>> {
+        self.virtio_devices
+            .iter()
+            .filter_map(|((device_type, _), pci_device)| {
+                if *device_type == filter_type {
+                    Some(
+                        pci_device
+                            .lock()
+                            .expect("Poisoned lock")
+                            .virtio_device(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn for_each_virtio_device(&self, mut f: impl FnMut(VirtioDeviceType, &dyn VirtioDevice)) {
