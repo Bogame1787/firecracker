@@ -255,6 +255,25 @@ impl Persist<'_> for MmioTransport {
     }
 }
 
+impl MmioTransport {
+    fn reset_to_state(
+        &mut self,
+        state: &MmioTransportState,
+    ) -> Result<(), ()>{
+        self.features_select = state.features_select;
+        self.acked_features_select = state.acked_features_select;
+        self.queue_select = state.queue_select;
+        self.device_status = state.device_status;
+        self.config_generation = state.config_generation;
+        self.interrupt
+            .irq_status
+            .store(state.interrupt_status, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+}
+
 #[cfg(test)]
 mod tests {
     use vmm_sys_util::tempfile::TempFile;
