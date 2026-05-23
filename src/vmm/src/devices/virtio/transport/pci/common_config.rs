@@ -80,6 +80,18 @@ impl VirtioPciCommonConfig {
         }
     }
 
+    pub fn reset(&mut self, state: &VirtioPciCommonConfigState) {
+        self.driver_status = state.driver_status;
+        self.config_generation = state.config_generation;
+        self.device_feature_select = state.device_feature_select;
+        self.driver_feature_select = state.driver_feature_select;
+        self.queue_select = state.queue_select;
+        self.msix_config.store(state.msix_config, Ordering::Release);
+        *self.msix_queues
+             .lock()
+             .expect("Poisoned lock") = state.msix_queues.clone();
+    }
+
     pub fn state(&self) -> VirtioPciCommonConfigState {
         VirtioPciCommonConfigState {
             driver_status: self.driver_status,
