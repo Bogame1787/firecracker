@@ -149,6 +149,43 @@ impl MsixConfig {
         })
     }
 
+    /// Reset MSI-X configuration to snapshot state
+    pub fn reset(
+        &mut self,
+        state: &MsixConfigState,
+        devid: u32,
+    ) -> Result<(), InterruptError> {
+        if self.enabled {
+            self.vectors.disable()?;
+        }
+
+        self.table_entries = state.table_entries.clone();
+        self.pba_entries = state.pba_entries.clone();
+        self.masked = state.masked;
+        self.enabled = state.enabled;
+        self.devid = devid;
+
+        if self.enabled && !self.masked {
+            for (idx, table_entry) in self.table_entries.iter().enumerate() {
+                if table_entry.masked() {
+                    continue;
+                }
+
+                let config = MsixVectorConfig {
+                    high_addr: table_entry.msg_addr_hi,
+                    low_addr: table_entry.msg_addr_lo,
+                    data: table_entry.msg_data,
+                    devid,
+                };
+
+                self.vectors.update(idx, config, self.masked, true)?;
+                self.vectors.enable()?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Create the state object for serializing MSI-X vectors
     pub fn state(&self) -> MsixConfigState {
         MsixConfigState {
