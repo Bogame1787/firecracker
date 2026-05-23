@@ -255,6 +255,30 @@ pub enum VirtioPciDeviceError {
     Msi(#[from] InterruptError),
 }
 
+#[derive(Debug, thiserror::Error, displaydoc::Display)]
+pub enum VirtioPciResetError {
+    /// PCI topology mismatch: current BDF={current:?}, snapshot BDF={target:?}
+    BdfMismatch {
+        current: PciBdf,
+        target: PciBdf,
+    },
+
+    /// PCI BAR mismatch: current BAR={current:#x}, snapshot BAR={target:#x}
+    BarMismatch {
+        current: u64,
+        target: u64,
+    },
+
+    /// Missing PCI interrupt object during transport reset.
+    MissingInterrupt,
+
+    /// Invalid virtio PCI cfg capability state.
+    InvalidPciCfgCapability,
+
+    /// Failed to reset MSI-X state: {0}
+    Msix(#[from] InterruptError),
+}
+
 pub struct VirtioPciDevice {
     id: String,
 
@@ -470,6 +494,54 @@ impl VirtioPciDevice {
         }
 
         Ok(virtio_pci_device)
+    }
+
+    pub fn reset(
+        &mut self,
+        state: &VirtioPciDeviceState,
+    ) -> Result<(), VirtioPciResetError> {
+        if self.pci_device_bdf != state.pci_device_bdf {
+            return Err(VirtioPciResetError::BdfMismatch{
+                current: self.pci_device_bdf,
+                target: state.pci_device_bdf,
+            });
+        }
+
+        if self.bar_address != state.bar_address {
+            return Err(VirtioPciResetError::BarMismatch{
+                current: self.bar_address,
+                target: state.bar_address,
+            });
+        }
+
+        let interrupt = self
+            .virtio_interrupt
+            .as_ref()
+            .ok_or(VirtioPciResetError::MissingInterrupt)?;
+
+        interrupt
+            .msix_config
+            .lock()
+            .expect("Poisoned lock")
+            .reset(&state.msix_state, state.pci_device_bdf.into())?;
+
+        self.configuration = PciConfiguration::type0_from_state(
+            state.pci_configuration_state.clone(),
+            Some(interrupt.msix_config.clone()),
+        );
+
+        self.common_config.reset(&state.pci_dev_state);
+
+        self.cap_pci_cfg_info = VirtioPciCfgCapInfo {
+            offset: state.cap_pci_cfg_offset,
+            cap: *VirtioPciCfgCap::from_slice(&state.cap_pci_cfg)
+                .ok_or(VirtioPciResetError::InvalidPciCfgCapability)?,
+        };
+
+        self.device_activated
+            .store(state.device_activated, Ordering::Release);
+
+        Ok(())
     }
 
     fn is_driver_ready(&self) -> bool {
