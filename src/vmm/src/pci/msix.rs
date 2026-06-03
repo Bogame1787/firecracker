@@ -5,8 +5,10 @@
 //
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use byteorder::{ByteOrder, LittleEndian};
+use log::info;
 use pci::PciCapabilityId;
 use serde::{Deserialize, Serialize};
 use vm_memory::ByteValued;
@@ -155,15 +157,31 @@ impl MsixConfig {
         state: &MsixConfigState,
         devid: u32,
     ) -> Result<(), InterruptError> {
+        let msix_unchanged =
+            self.table_entries == state.table_entries
+                && self.pba_entries == state.pba_entries
+                && self.masked == state.masked
+                && self.enabled == state.enabled
+                && self.devid == devid;
+
+        if msix_unchanged {
+            return Ok(());
+        }
+
+        let start_time = Instant::now();
         if self.enabled {
             self.vectors.disable()?;
         }
+        let disable_latency = start_time.elapsed();
 
         self.table_entries = state.table_entries.clone();
         self.pba_entries = state.pba_entries.clone();
         self.masked = state.masked;
         self.enabled = state.enabled;
         self.devid = devid;
+
+        let mut updated_vectors = 0usize;
+        let start_time = Instant::now();
 
         if self.enabled && !self.masked {
             for (idx, table_entry) in self.table_entries.iter().enumerate() {
@@ -178,10 +196,19 @@ impl MsixConfig {
                     devid,
                 };
 
-                self.vectors.update(idx, config, self.masked, true)?;
-                self.vectors.enable()?;
+                /// MsixVectorGroup::update() will also enable the vector as self.masked is false
+                self.vectors.update(idx, config, false, true)?;
+                updated_vectors += 1;
             }
         }
+        let update_latency = start_time.elapsed();
+
+        info!(
+            "Reset MSI-X breakdown: disable={:?} update={:?} updated_vectors={}",
+            disable_latency,
+            update_latency,
+            updated_vectors,
+        );
 
         Ok(())
     }
