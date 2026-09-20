@@ -60,6 +60,28 @@ impl Block {
         }
     }
 
+    /// see VirtioBlock::prepare_reset
+    pub fn prepare_reset(&mut self) -> Result<(), BlockError> {
+        match self {
+            Self::Virtio(b) => b.prepare_reset().map_err(BlockError::VirtioBackend),
+            Self::VhostUser(_) => Err(BlockError::InvalidBlockBackend),
+        }
+    }
+
+    /// see VirtioBlock::reset_to_state. vhost-user isn't supported.
+    pub fn reset_to_state(
+        &mut self,
+        args: BlockConstructorArgs,
+        state: &BlockState,
+    ) -> Result<(), BlockError> {
+        match (self, state) {
+            (Self::Virtio(b), BlockState::Virtio(s)) => {
+                b.reset_to_state(args, s).map_err(BlockError::VirtioBackend)
+            }
+            _ => Err(BlockError::InvalidBlockBackend),
+        }
+    }
+
     pub fn update_rate_limiter(
         &mut self,
         bytes: BucketUpdate,
@@ -256,6 +278,44 @@ impl Persist<'_> for Block {
                 VhostUserBlock::restore(constructor_args, s)
                     .map_err(BlockError::VhostUserBackend)?,
             )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use vmm_sys_util::tempfile::TempFile;
+
+    use super::*;
+    use crate::devices::virtio::block::virtio::device::FileEngineType;
+    use crate::devices::virtio::block::virtio::test_utils::default_block_with_path;
+    use crate::devices::virtio::test_utils::{VirtQueue, default_interrupt, default_mem};
+    use vm_memory::GuestAddress;
+
+    #[test]
+    fn test_block_reset_dispatches_to_virtio_backend() {
+        let f = TempFile::new().unwrap();
+        f.as_file().set_len(0x1000).unwrap();
+        let mut inner = default_block_with_path(
+            f.as_path().to_str().unwrap().to_string(),
+            FileEngineType::Sync,
+        );
+
+        let mem = default_mem();
+        let vq = VirtQueue::new(GuestAddress(0), &mem, 256);
+        inner.queues[0] = vq.create_queue();
+        inner.activate(mem.clone(), default_interrupt()).unwrap();
+
+        let mut block = Block::Virtio(inner);
+        let state = block.save();
+        assert!(matches!(state, BlockState::Virtio(_)));
+
+        block.prepare_reset().unwrap();
+        block.reset_to_state(BlockConstructorArgs { mem }, &state).unwrap();
+
+        match &block {
+            Block::Virtio(b) => assert!(b.is_activated()),
+            Block::VhostUser(_) => panic!("variant changed across reset"),
         }
     }
 }
