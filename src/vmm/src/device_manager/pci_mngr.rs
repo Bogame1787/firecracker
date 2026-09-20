@@ -289,6 +289,26 @@ pub struct VirtioDeviceState<T> {
     pub transport_state: VirtioPciDeviceState,
 }
 
+impl<T> super::persist::TopologyKeyed for VirtioDeviceState<T> {
+    type DeviceState = T;
+
+    fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    fn device_state(&self) -> &T {
+        &self.device_state
+    }
+
+    fn topology_key(&self) -> u64 {
+        u64::from(self.pci_device_bdf)
+    }
+
+    fn topology_desc(&self) -> String {
+        format!("pci_bdf={:#x}", self.pci_device_bdf)
+    }
+}
+
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct PciDevicesState {
     /// Whether PCI is enabled

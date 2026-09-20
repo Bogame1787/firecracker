@@ -34,6 +34,7 @@ use crate::devices::virtio::pmem::persist::{PmemConstructorArgs, PmemState};
 use crate::devices::virtio::rng::Entropy;
 use crate::devices::virtio::rng::persist::{EntropyConstructorArgs, EntropyState};
 use crate::devices::virtio::transport::mmio::{IrqTrigger, MmioTransport};
+use crate::devices::virtio::transport::pci::device::VirtioPciResetError;
 use crate::devices::virtio::vsock::persist::{
     VsockConstructorArgs, VsockState, VsockUdsConstructorArgs,
 };
@@ -44,6 +45,29 @@ use crate::snapshot::Persist;
 use crate::vmm_config::memory_hotplug::MemoryHotplugConfig;
 use crate::vstate::memory::GuestMemoryMmap;
 use crate::{EventManager, Vm};
+
+#[derive(Debug, thiserror::Error, displaydoc::Display)]
+pub enum ResetDevicesError {
+    /// no device at {topology}
+    DeviceNotFound { topology: String },
+    /// device at {topology} isn't a block device
+    DowncastBlock { topology: String },
+    /// pci transport reset failed: {0}
+    PciTransport(#[from] VirtioPciResetError),
+    /// block reset failed: {0}
+    Block(#[from] crate::devices::virtio::block::BlockError),
+}
+
+/// lets the reset path find the live device a saved state belongs to. mmio addr
+/// and pci bdf are both stable for a given config.
+pub trait TopologyKeyed {
+    type DeviceState;
+
+    fn device_id(&self) -> &str;
+    fn device_state(&self) -> &Self::DeviceState;
+    fn topology_key(&self) -> u64;
+    fn topology_desc(&self) -> String;
+}
 
 /// Holds the state of a MMIO VirtIO device
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +80,26 @@ pub struct VirtioDeviceState<T> {
     pub transport_state: MmioTransportState,
     /// VmmResources.
     pub device_info: MMIODeviceInfo,
+}
+
+impl<T> TopologyKeyed for VirtioDeviceState<T> {
+    type DeviceState = T;
+
+    fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    fn device_state(&self) -> &T {
+        &self.device_state
+    }
+
+    fn topology_key(&self) -> u64 {
+        self.device_info.addr
+    }
+
+    fn topology_desc(&self) -> String {
+        format!("mmio_addr={:#x}", self.device_info.addr)
+    }
 }
 
 /// Holds the state of a legacy device connected to the MMIO space.
