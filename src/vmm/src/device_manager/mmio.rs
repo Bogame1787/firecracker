@@ -416,6 +416,23 @@ impl MMIODeviceManager {
             .collect()
     }
 
+    /// live mmio transports of a type, keyed by base address
+    pub fn mmio_transports_by_addr(
+        &self,
+        filter_type: VirtioDeviceType,
+    ) -> HashMap<u64, Arc<Mutex<MmioTransport>>> {
+        self.virtio_devices
+            .iter()
+            .filter_map(|((device_type, _), mmio_device)| {
+                if *device_type != filter_type {
+                    return None;
+                }
+
+                Some((mmio_device.resources.addr, mmio_device.inner.clone()))
+            })
+            .collect()
+    }
+
     /// Gets the specified device.
     pub fn get_virtio_device(
         &self,
