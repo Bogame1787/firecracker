@@ -384,9 +384,9 @@ impl DeviceManager {
         device_type: VirtioDeviceType,
     ) -> Vec<Arc<Mutex<dyn VirtioDevice>>> {
         if self.is_pci_enabled() {
-            self.pci_devices.virtio_devices_of_type(device_type)
+            self.pci_devices.virtio_devices_by_type(device_type)
         } else {
-            self.mmio_devices.virtio_devices_of_type(device_type)
+            self.mmio_devices.virtio_devices_by_type(device_type)
         }
     }
 

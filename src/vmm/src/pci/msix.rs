@@ -196,7 +196,7 @@ impl MsixConfig {
                     devid,
                 };
 
-                /// MsixVectorGroup::update() will also enable the vector as self.masked is false
+                // MsixVectorGroup::update() will also enable the vector as self.masked is false
                 self.vectors.update(idx, config, false, true)?;
                 updated_vectors += 1;
             }
