@@ -91,6 +91,31 @@ impl Persist<'_> for RateLimiter {
     }
 }
 
+impl RateLimiter {
+    /// reset to a saved state without replacing the timer fd. restore() would
+    /// allocate a new one and the old one is still registered with the event loop.
+    pub fn reset(&mut self, state: &RateLimiterState) -> Result<(), io::Error> {
+        self.ops = if let Some(ops) = state.ops.as_ref() {
+            Some(TokenBucket::restore((), ops)?)
+        } else {
+            None
+        };
+
+        self.bandwidth = if let Some(bw) = state.bandwidth.as_ref() {
+            Some(TokenBucket::restore((), bw)?)
+        } else {
+            None
+        };
+
+        // disarm and eat anything already pending
+        self.timer_fd.arm(Duration::ZERO, None);
+        self.timer_fd.read();
+        self.timer_active = false;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -203,5 +228,34 @@ mod tests {
                 .unwrap()
                 .partial_eq(restored_rate_limiter.bandwidth().unwrap())
         );
+    }
+
+    #[test]
+    fn test_rate_limiter_reset_preserves_timer_fd() {
+        use std::os::unix::io::AsRawFd;
+
+        let refill_time = 100_000;
+        let mut rate_limiter = RateLimiter::new(100, 0, refill_time, 10, 0, refill_time).unwrap();
+
+        let clean_state = rate_limiter.save();
+        let fd_before = rate_limiter.as_raw_fd();
+
+        // drain the bucket so the timer arms
+        assert!(rate_limiter.consume(100, TokenType::Bytes));
+        assert!(!rate_limiter.consume(1, TokenType::Bytes));
+        assert!(rate_limiter.is_blocked());
+
+        rate_limiter.reset(&clean_state).unwrap();
+
+        // same fd, not a new one
+        assert_eq!(rate_limiter.as_raw_fd(), fd_before);
+
+        assert!(!rate_limiter.is_blocked());
+
+        let restored = RateLimiter::restore((), &clean_state).unwrap();
+        assert!(rate_limiter.bandwidth().unwrap().partial_eq(restored.bandwidth().unwrap()));
+        assert!(rate_limiter.ops().unwrap().partial_eq(restored.ops().unwrap()));
+
+        assert!(rate_limiter.consume(100, TokenType::Bytes));
     }
 }
