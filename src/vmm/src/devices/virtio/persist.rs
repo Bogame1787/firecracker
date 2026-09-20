@@ -256,10 +256,8 @@ impl Persist<'_> for MmioTransport {
 }
 
 impl MmioTransport {
-    fn reset_to_state(
-        &mut self,
-        state: &MmioTransportState,
-    ) -> Result<(), ()>{
+    /// overwrite the transport registers in place
+    pub(crate) fn reset_to_state(&mut self, state: &MmioTransportState) {
         self.features_select = state.features_select;
         self.acked_features_select = state.acked_features_select;
         self.queue_select = state.queue_select;
@@ -268,10 +266,7 @@ impl MmioTransport {
         self.interrupt
             .irq_status
             .store(state.interrupt_status, Ordering::SeqCst);
-
-        Ok(())
     }
-
 }
 
 #[cfg(test)]

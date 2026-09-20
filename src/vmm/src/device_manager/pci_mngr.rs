@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
+use std::time::Instant;
 use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 use event_manager::{MutEventSubscriber, SubscriberOps};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 
 use super::persist::MmdsState;
@@ -40,6 +41,7 @@ use crate::vmm_config::memory_hotplug::MemoryHotplugConfig;
 use crate::vstate::bus::BusError;
 use crate::vstate::interrupts::InterruptError;
 use crate::vstate::memory::GuestMemoryMmap;
+use super::persist::{ResetDevicesError, TopologyKeyed};
 use crate::{EventManager, Vm};
 use pci::PciBdf;
 
@@ -266,6 +268,72 @@ impl PciDevices {
                 Some((key, pci_device.clone()))
             })
             .collect()
+    }
+
+    /// drain every block device before the memory reset
+    pub fn prepare_block_devices_reset(&self) -> Result<(), ResetDevicesError> {
+        for pci_dev in self.pci_devices_by_bdf(VirtioDeviceType::Block).values() {
+            let virtio_dev = pci_dev.lock().expect("Poisoned lock").virtio_device();
+            let mut dev = virtio_dev.lock().expect("Poisoned lock");
+            let block = dev
+                .as_mut_any()
+                .downcast_mut::<Block>()
+                .ok_or_else(|| ResetDevicesError::DowncastBlock {
+                    topology: "pci".to_string(),
+                })?;
+            block.prepare_reset()?;
+        }
+        Ok(())
+    }
+
+    /// reset every block device after the memory reset. matched by bdf.
+    pub fn reset_block_devices(
+        &self,
+        mem: GuestMemoryMmap,
+        states: &[VirtioDeviceState<BlockState>],
+    ) -> Result<(), ResetDevicesError> {
+        let live = self.pci_devices_by_bdf(VirtioDeviceType::Block);
+
+        for state in states {
+            let device_start = Instant::now();
+            let key = state.topology_key();
+
+            let pci_dev = live
+                .get(&key)
+                .ok_or_else(|| ResetDevicesError::DeviceNotFound {
+                    topology: state.topology_desc(),
+                })?;
+
+            let (virtio_dev, transport_latency) = {
+                let mut pci_dev = pci_dev.lock().expect("Poisoned lock");
+                let t = Instant::now();
+                pci_dev.reset(&state.transport_state)?;
+                (pci_dev.virtio_device(), t.elapsed())
+            };
+
+            let mut dev = virtio_dev.lock().expect("Poisoned lock");
+            let block = dev
+                .as_mut_any()
+                .downcast_mut::<Block>()
+                .ok_or_else(|| ResetDevicesError::DowncastBlock {
+                    topology: state.topology_desc(),
+                })?;
+
+            let t = Instant::now();
+            block.reset_to_state(
+                BlockConstructorArgs { mem: mem.clone() },
+                state.device_state(),
+            )?;
+
+            info!(
+                "Reset PCI block device {}: total={:?} transport={:?} backend={:?}",
+                state.topology_desc(),
+                device_start.elapsed(),
+                transport_latency,
+                t.elapsed(),
+            );
+        }
+        Ok(())
     }
 
     pub fn for_each_virtio_device(&self, mut f: impl FnMut(VirtioDeviceType, &dyn VirtioDevice)) {

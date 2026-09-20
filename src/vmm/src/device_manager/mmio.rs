@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[cfg(target_arch = "x86_64")]
 use acpi_tables::{Aml, aml};
@@ -15,7 +16,7 @@ use event_manager::SubscriberOps;
 use kvm_ioctls::IoEventAddress;
 use linux_loader::cmdline as kernel_cmdline;
 #[cfg(target_arch = "x86_64")]
-use log::debug;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use vm_allocator::AllocPolicy;
 
@@ -27,6 +28,10 @@ use crate::devices::legacy::{RTCDevice, SerialDevice};
 use crate::devices::pseudo::BootTimer;
 use crate::devices::virtio::device::{VirtioDevice, VirtioDeviceType};
 use crate::devices::virtio::transport::mmio::MmioTransport;
+use crate::devices::virtio::block::device::Block;
+use crate::devices::virtio::block::persist::{BlockConstructorArgs, BlockState};
+use crate::vstate::memory::GuestMemoryMmap;
+use super::persist::{ResetDevicesError, TopologyKeyed, VirtioDeviceState};
 use crate::vstate::bus::{Bus, BusError};
 #[cfg(target_arch = "x86_64")]
 use crate::vstate::memory::GuestAddress;
@@ -431,6 +436,72 @@ impl MMIODeviceManager {
                 Some((mmio_device.resources.addr, mmio_device.inner.clone()))
             })
             .collect()
+    }
+
+    /// drain every block device before the memory reset
+    pub fn prepare_block_devices_reset(&self) -> Result<(), ResetDevicesError> {
+        for transport in self.mmio_transports_by_addr(VirtioDeviceType::Block).values() {
+            let virtio_dev = transport.lock().expect("Poisoned lock").device();
+            let mut dev = virtio_dev.lock().expect("Poisoned lock");
+            let block = dev
+                .as_mut_any()
+                .downcast_mut::<Block>()
+                .ok_or_else(|| ResetDevicesError::DowncastBlock {
+                    topology: "mmio".to_string(),
+                })?;
+            block.prepare_reset()?;
+        }
+        Ok(())
+    }
+
+    /// reset every block device after the memory reset. matched by mmio addr.
+    pub fn reset_block_devices(
+        &self,
+        mem: GuestMemoryMmap,
+        states: &[VirtioDeviceState<BlockState>],
+    ) -> Result<(), ResetDevicesError> {
+        let live = self.mmio_transports_by_addr(VirtioDeviceType::Block);
+
+        for state in states {
+            let device_start = Instant::now();
+            let key = state.topology_key();
+
+            let transport = live
+                .get(&key)
+                .ok_or_else(|| ResetDevicesError::DeviceNotFound {
+                    topology: state.topology_desc(),
+                })?;
+
+            let (virtio_dev, transport_latency) = {
+                let mut transport = transport.lock().expect("Poisoned lock");
+                let t = Instant::now();
+                transport.reset_to_state(&state.transport_state);
+                (transport.device(), t.elapsed())
+            };
+
+            let mut dev = virtio_dev.lock().expect("Poisoned lock");
+            let block = dev
+                .as_mut_any()
+                .downcast_mut::<Block>()
+                .ok_or_else(|| ResetDevicesError::DowncastBlock {
+                    topology: state.topology_desc(),
+                })?;
+
+            let t = Instant::now();
+            block.reset_to_state(
+                BlockConstructorArgs { mem: mem.clone() },
+                state.device_state(),
+            )?;
+
+            info!(
+                "Reset MMIO block device {}: total={:?} transport={:?} backend={:?}",
+                state.topology_desc(),
+                device_start.elapsed(),
+                transport_latency,
+                t.elapsed(),
+            );
+        }
+        Ok(())
     }
 
     /// Gets the specified device.

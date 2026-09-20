@@ -866,4 +866,99 @@ mod tests {
             serde_json::to_string_pretty(&VmmConfig::from(&*vm_resources)).unwrap()
         );
     }
+
+    // tempfiles have to outlive the vmm
+    fn vmm_with_one_block() -> (crate::Vmm, Vec<TempFile>) {
+        let mut event_manager = EventManager::new().unwrap();
+        let mut vmm = default_vmm();
+        let mut cmdline = default_kernel_cmdline();
+        let block_configs = vec![CustomBlockConfig::new(
+            "root".to_string(),
+            true,
+            None,
+            true,
+            CacheType::Unsafe,
+        )];
+        let files = insert_block_devices(&mut vmm, &mut cmdline, &mut event_manager, block_configs);
+        (vmm, files)
+    }
+
+    fn with_live_block<R>(
+        vmm: &crate::Vmm,
+        f: impl FnOnce(&mut crate::devices::virtio::block::virtio::VirtioBlock) -> R,
+    ) -> R {
+        let devs = vmm
+            .device_manager
+            .mmio_devices
+            .virtio_devices_by_type(VirtioDeviceType::Block);
+        assert_eq!(devs.len(), 1);
+        let mut dev = devs[0].lock().unwrap();
+        let block = dev.as_mut_any().downcast_mut::<Block>().unwrap();
+        match block {
+            Block::Virtio(b) => f(b),
+            Block::VhostUser(_) => panic!("expected virtio block"),
+        }
+    }
+
+    #[test]
+    fn test_reset_block_devices_rewinds_cursors_via_dispatch() {
+        use std::num::Wrapping;
+
+        let (vmm, _files) = vmm_with_one_block();
+        let mem = vmm.vm.guest_memory().clone();
+
+        let states = vmm.device_manager.mmio_devices.save();
+        assert_eq!(states.block_devices.len(), 1);
+        with_live_block(&vmm, |b| assert_eq!(b.queues[0].next_avail, Wrapping(0)));
+
+        with_live_block(&vmm, |b| {
+            b.queues[0].next_avail = Wrapping(4217);
+            b.queues[0].next_used = Wrapping(4217);
+            b.is_io_engine_throttled = true;
+        });
+
+        vmm.device_manager
+            .mmio_devices
+            .reset_block_devices(mem, &states.block_devices)
+            .unwrap();
+
+        with_live_block(&vmm, |b| {
+            assert_eq!(b.queues[0].next_avail, Wrapping(0));
+            assert_eq!(b.queues[0].next_used, Wrapping(0));
+            assert!(!b.is_io_engine_throttled);
+        });
+    }
+
+    #[test]
+    fn test_reset_block_devices_unknown_topology_is_an_error() {
+        let (vmm, _files) = vmm_with_one_block();
+        let mem = vmm.vm.guest_memory().clone();
+
+        let mut states = vmm.device_manager.mmio_devices.save();
+        states.block_devices[0].device_info.addr = 0xdead_0000;
+
+        let err = vmm
+            .device_manager
+            .mmio_devices
+            .reset_block_devices(mem, &states.block_devices)
+            .unwrap_err();
+        assert!(matches!(err, ResetDevicesError::DeviceNotFound { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn test_prepare_block_devices_reset_dispatches() {
+        let (vmm, _files) = vmm_with_one_block();
+
+        with_live_block(&vmm, |b| b.queue_evts[0].write(1).unwrap());
+
+        vmm.device_manager
+            .mmio_devices
+            .prepare_block_devices_reset()
+            .unwrap();
+
+        with_live_block(&vmm, |b| {
+            let err = b.queue_evts[0].read().unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+        });
+    }
 }
