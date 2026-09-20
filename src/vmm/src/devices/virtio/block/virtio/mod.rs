@@ -63,4 +63,11 @@ pub enum VirtioBlockError {
     RateLimiter(std::io::Error),
     /// Persistence error: {0}
     Persist(crate::devices::virtio::persist::PersistError),
+    /// snapshot expects disk {target} but device is backed by {current}
+    DiskPathMismatch { current: String, target: String },
+    /// snapshot uses {target:?} engine but device uses {current:?}
+    FileEngineTypeMismatch {
+        current: device::FileEngineType,
+        target: device::FileEngineType,
+    },
 }
