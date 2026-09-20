@@ -579,6 +579,58 @@ impl VirtioBlock {
             self.process_async_completion_queue();
         }
     }
+
+    /// clear any kick that landed between pause and reset
+    fn drain_queue_evts(&self) {
+        for (idx, event) in self.queue_evts.iter().enumerate() {
+            loop {
+                match event.read() {
+                    Ok(_) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(err) => {
+                        warn!(
+                            "block reset: failed draining queue event {} for device {}: {:?}",
+                            idx, self.id, err
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// must run before guest memory is reverted. in-flight async requests point
+    /// into guest memory and their completions would land in evicted pages.
+    pub fn prepare_reset(&mut self) -> Result<(), VirtioBlockError> {
+        self.disk
+            .file_engine
+            .drain_and_flush(true)
+            .map_err(VirtioBlockError::FileEngine)?;
+
+        self.drain_queue_evts();
+
+        Ok(())
+    }
+
+    /// the memory-dependent part of activate(). doesn't touch activate_evt since
+    /// the handlers are already registered.
+    pub fn apply_activation_state(&mut self, mem: &GuestMemoryMmap) -> Result<(), VirtioBlockError> {
+        for q in self.queues.iter_mut() {
+            q.initialize(mem).map_err(|err| {
+                VirtioBlockError::Persist(
+                    crate::devices::virtio::persist::PersistError::QueueConstruction(err),
+                )
+            })?;
+        }
+
+        if self.has_feature(u64::from(VIRTIO_RING_F_EVENT_IDX)) {
+            for queue in &mut self.queues {
+                queue.enable_notif_suppression();
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl VirtioDevice for VirtioBlock {
@@ -1681,6 +1733,71 @@ mod tests {
             // Check that all the pending flush requests were processed during `prepare_save()`.
             check_flush_requests_batch(5, &vq);
         }
+    }
+
+    #[test]
+    fn test_prepare_reset_drains_queue_evts() {
+        for engine in [FileEngineType::Sync, FileEngineType::Async] {
+            let mut block = default_block(engine);
+
+            let mem = default_mem();
+            let interrupt = default_interrupt();
+            let vq = VirtQueue::new(GuestAddress(0), &mem, 16);
+            block.queues[0] = vq.create_queue();
+            block.activate(mem.clone(), interrupt).unwrap();
+
+            block.queue_evts[0].write(1).unwrap();
+            assert_eq!(block.queue_evts[0].read().unwrap(), 1);
+            block.queue_evts[0].write(1).unwrap();
+
+            block.prepare_reset().unwrap();
+
+            let err = block.queue_evts[0].read().unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+        }
+    }
+
+    #[test]
+    fn test_prepare_reset_drains_async_engine() {
+        // submit but never process completions
+        let mut block = default_block(FileEngineType::Async);
+
+        let mem = default_mem();
+        let interrupt = default_interrupt();
+        let vq = VirtQueue::new(GuestAddress(0), &mem, 16);
+        block.queues[0] = vq.create_queue();
+        block.activate(mem.clone(), interrupt).unwrap();
+
+        add_flush_requests_batch(&mut block, &vq, 5);
+        simulate_queue_event(&mut block, None);
+
+        block.prepare_reset().unwrap();
+
+        // nothing should have reached the used ring
+        assert_eq!(vq.used.idx.get(), 0);
+    }
+
+    #[test]
+    fn test_apply_activation_state() {
+        let mut block = default_block(FileEngineType::Sync);
+
+        let mem = default_mem();
+        let vq = VirtQueue::new(GuestAddress(0), &mem, 16);
+        block.queues[0] = vq.create_queue();
+
+        block.acked_features |= 1u64 << VIRTIO_RING_F_EVENT_IDX;
+
+        block.queues[0].desc_table_ptr = std::ptr::null();
+        block.queues[0].uses_notif_suppression = false;
+
+        block.apply_activation_state(&mem).unwrap();
+
+        assert!(!block.queues[0].desc_table_ptr.is_null());
+        assert!(block.queues[0].uses_notif_suppression);
+
+        // activate_evt must not have fired
+        let err = block.activate_evt.read().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
     }
 
     #[test]
