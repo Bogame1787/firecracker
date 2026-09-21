@@ -440,16 +440,19 @@ impl<'a> Persist<'a> for MMIODeviceManager {
         }
 
         for block_state in &state.block_devices {
+            let device_start = std::time::Instant::now();
             let device = Arc::new(Mutex::new(Block::restore(
                 BlockConstructorArgs { mem: mem.clone() },
                 &block_state.device_state,
             )?));
+            let construct_latency = device_start.elapsed();
 
             constructor_args
                 .vm_resources
                 .block
                 .add_virtio_device(device.clone());
 
+            let transport_start = std::time::Instant::now();
             restore_helper(
                 device,
                 block_state.device_state.is_activated(),
@@ -459,6 +462,15 @@ impl<'a> Persist<'a> for MMIODeviceManager {
                 &block_state.device_info,
                 constructor_args.event_manager,
             )?;
+
+            log::info!(
+                "Restored MMIO block device '{}' at mmio_addr={:#x}: total={:?} construct={:?} transport={:?}",
+                block_state.device_id,
+                block_state.device_info.addr,
+                device_start.elapsed(),
+                construct_latency,
+                transport_start.elapsed(),
+            );
         }
 
         // Initialize MMDS if MMDS state is included.

@@ -157,12 +157,14 @@ impl MsixConfig {
         state: &MsixConfigState,
         devid: u32,
     ) -> Result<(), InterruptError> {
-        let msix_unchanged =
-            self.table_entries == state.table_entries
-                && self.pba_entries == state.pba_entries
-                && self.masked == state.masked
-                && self.enabled == state.enabled
-                && self.devid == devid;
+        // skip if nothing changed. env var forces the full path for measuring.
+        let fast_path_enabled = std::env::var_os("CHAMELEON_MSIX_NO_FASTPATH").is_none();
+        let msix_unchanged = fast_path_enabled
+            && self.table_entries == state.table_entries
+            && self.pba_entries == state.pba_entries
+            && self.masked == state.masked
+            && self.enabled == state.enabled
+            && self.devid == devid;
 
         if msix_unchanged {
             return Ok(());

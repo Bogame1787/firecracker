@@ -602,23 +602,35 @@ impl<'a> Persist<'a> for PciDevices {
         }
 
         for block_state in &state.block_devices {
+            let device_start = Instant::now();
             let device = Arc::new(Mutex::new(Block::restore(
                 BlockConstructorArgs { mem: mem.clone() },
                 &block_state.device_state,
             )?));
+            let construct_latency = device_start.elapsed();
 
             constructor_args
                 .vm_resources
                 .block
                 .add_virtio_device(device.clone());
 
+            let transport_start = Instant::now();
             pci_devices.restore_pci_device(
                 constructor_args.vm,
                 device,
                 &block_state.device_id,
                 &block_state.transport_state,
                 constructor_args.event_manager,
-            )?
+            )?;
+
+            info!(
+                "Restored PCI block device '{}' at pci_bdf={:#x}: total={:?} construct={:?} transport={:?}",
+                block_state.device_id,
+                block_state.pci_device_bdf,
+                device_start.elapsed(),
+                construct_latency,
+                transport_start.elapsed(),
+            );
         }
 
         // Initialize MMDS if MMDS state is included.
