@@ -34,7 +34,7 @@ use crate::devices::virtio::generated::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use crate::devices::virtio::queue::{InvalidAvailIdx, Queue};
 use crate::devices::virtio::transport::{VirtioInterrupt, VirtioInterruptType};
 use crate::impl_device_type;
-use crate::logger::{IncMetric, error, warn};
+use crate::logger::{IncMetric, error, info, warn};
 use crate::rate_limiter::{BucketUpdate, RateLimiter};
 use crate::utils::u64_to_usize;
 use crate::vmm_config::RateLimiterConfig;
@@ -602,6 +602,23 @@ impl VirtioBlock {
     /// must run before guest memory is reverted. in-flight async requests point
     /// into guest memory and their completions would land in evicted pages.
     pub fn prepare_reset(&mut self) -> Result<(), VirtioBlockError> {
+        let in_flight = self.disk.file_engine.in_flight();
+        if in_flight > 0 {
+            info!(
+                "block reset: device {} has {} I/O operation(s) in flight; discarding",
+                self.id, in_flight
+            );
+        }
+
+        // for experiments only, lets us see what happens without the drain
+        if std::env::var_os("CHAMELEON_SKIP_BLOCK_DRAIN").is_some() {
+            warn!(
+                "block reset: drain SKIPPED for device {} (CHAMELEON_SKIP_BLOCK_DRAIN set)",
+                self.id
+            );
+            return Ok(());
+        }
+
         self.disk
             .file_engine
             .drain_and_flush(true)

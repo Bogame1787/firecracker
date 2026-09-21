@@ -157,6 +157,14 @@ impl FileEngine {
         }
     }
 
+    /// in-flight ops, always 0 for sync
+    pub fn in_flight(&self) -> u32 {
+        match self {
+            FileEngine::Async(engine) => engine.in_flight(),
+            FileEngine::Sync(_) => 0,
+        }
+    }
+
     pub fn drain(&mut self, discard: bool) -> Result<(), BlockIoError> {
         match self {
             FileEngine::Async(engine) => engine.drain(discard).map_err(BlockIoError::Async),

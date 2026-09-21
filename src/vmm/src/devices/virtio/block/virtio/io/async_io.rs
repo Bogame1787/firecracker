@@ -219,6 +219,11 @@ impl AsyncFileEngine {
         Ok(())
     }
 
+    /// ops submitted but not yet popped
+    pub fn in_flight(&self) -> u32 {
+        self.ring.num_ops()
+    }
+
     pub fn drain_and_flush(&mut self, discard_cqes: bool) -> Result<(), AsyncIoError> {
         self.drain(discard_cqes)?;
 
