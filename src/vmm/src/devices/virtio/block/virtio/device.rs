@@ -619,10 +619,18 @@ impl VirtioBlock {
             return Ok(());
         }
 
-        self.disk
-            .file_engine
-            .drain_and_flush(true)
-            .map_err(VirtioBlockError::FileEngine)?;
+        // the fsync is most of the cost here. env var skips it so we can measure.
+        if std::env::var_os("CHAMELEON_NO_FLUSH_ON_RESET").is_some() {
+            self.disk
+                .file_engine
+                .drain(true)
+                .map_err(VirtioBlockError::FileEngine)?;
+        } else {
+            self.disk
+                .file_engine
+                .drain_and_flush(true)
+                .map_err(VirtioBlockError::FileEngine)?;
+        }
 
         self.drain_queue_evts();
 
