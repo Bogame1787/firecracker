@@ -628,6 +628,10 @@ pub struct PerformanceMetrics {
     pub vmm_pause_vm: SharedStoreMetric,
     /// Measures the snapshot reset duration, at the VMM level, in microseconds.
     pub vmm_reset_snapshot: SharedStoreMetric,
+    /// block prepare (drain) time during a reset, in microseconds
+    pub vmm_block_prepare_reset: SharedStoreMetric,
+    /// block device reset time during a reset, in microseconds
+    pub vmm_block_reset: SharedStoreMetric,
     /// Measures the microVM resuming duration, at the VMM level, in microseconds.
     pub vmm_resume_vm: SharedStoreMetric,
 }
@@ -646,6 +650,8 @@ impl PerformanceMetrics {
             vmm_load_snapshot: SharedStoreMetric::new(),
             vmm_pause_vm: SharedStoreMetric::new(),
             vmm_reset_snapshot: SharedStoreMetric::new(),
+            vmm_block_prepare_reset: SharedStoreMetric::new(),
+            vmm_block_reset: SharedStoreMetric::new(),
             vmm_resume_vm: SharedStoreMetric::new(),
         }
     }

@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use utils::time::{ClockType, get_time_us};
+
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use userfaultfd::{FeatureFlags, RegisterMode, Uffd, UffdBuilder};
@@ -31,7 +33,7 @@ use crate::device_manager::{DevicePersistError, DevicesState};
 use crate::io_uring::IoUring;
 use crate::io_uring::operation::{OpCode, Operation};
 use crate::io_uring::restriction::Restriction;
-use crate::logger::{info, warn};
+use crate::logger::{METRICS, info, update_metric_with_elapsed_time, warn};
 use crate::resources::VmResources;
 use crate::seccomp::BpfThreadMap;
 use crate::snapshot::Snapshot;
@@ -774,10 +776,16 @@ pub fn reset_to_snapshot(
 
     // drain block io before we touch guest memory, in-flight async requests
     // would otherwise complete into evicted pages
-    let prepare_start = Instant::now();
+    let prepare_start_us = get_time_us(ClockType::Monotonic);
     vmm.prepare_block_reset()
         .map_err(ResetSnapshotError::PrepareBlockReset)?;
-    info!("Block prepare-reset latency: {:?}", prepare_start.elapsed());
+    info!(
+        "Block prepare-reset took {} us.",
+        update_metric_with_elapsed_time(
+            &METRICS.latencies_us.vmm_block_prepare_reset,
+            prepare_start_us
+        )
+    );
 
 
     // Canonicalize mem and diff paths before sending to handler.
@@ -876,10 +884,16 @@ pub fn reset_to_snapshot(
     }
 
     // memory is back, safe to rebind the queues
-    let block_reset_start = Instant::now();
+    let block_reset_start_us = get_time_us(ClockType::Monotonic);
     vmm.reset_block_devices(&microvm_state.device_states)
         .map_err(ResetSnapshotError::ResetBlockDevices)?;
-    info!("Block reset latency: {:?}", block_reset_start.elapsed());
+    info!(
+        "Block reset took {} us.",
+        update_metric_with_elapsed_time(
+            &METRICS.latencies_us.vmm_block_reset,
+            block_reset_start_us
+        )
+    );
 
     Ok(())
 }
