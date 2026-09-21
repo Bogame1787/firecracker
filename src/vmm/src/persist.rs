@@ -748,6 +748,10 @@ pub enum ResetSnapshotError {
     RestoreVcpuState(MicrovmStateError),
     /// Failed to load new snapshot state from file: {0}
     LoadNewState(SnapshotStateFromFileError),
+    /// block prepare failed: {0}
+    PrepareBlockReset(MicrovmStateError),
+    /// block reset failed: {0}
+    ResetBlockDevices(MicrovmStateError),
 }
 
 /// Represents page ranges to be remove for resetting 
@@ -767,6 +771,13 @@ pub fn reset_to_snapshot(
 
     let microvm_state = snapshot_state_from_file(&params.snapshot_path)
         .map_err(ResetSnapshotError::LoadNewState)?;
+
+    // drain block io before we touch guest memory, in-flight async requests
+    // would otherwise complete into evicted pages
+    let prepare_start = Instant::now();
+    vmm.prepare_block_reset()
+        .map_err(ResetSnapshotError::PrepareBlockReset)?;
+    info!("Block prepare-reset latency: {:?}", prepare_start.elapsed());
 
 
     // Canonicalize mem and diff paths before sending to handler.
@@ -864,7 +875,11 @@ pub fn reset_to_snapshot(
         }
     }
 
-
+    // memory is back, safe to rebind the queues
+    let block_reset_start = Instant::now();
+    vmm.reset_block_devices(&microvm_state.device_states)
+        .map_err(ResetSnapshotError::ResetBlockDevices)?;
+    info!("Block reset latency: {:?}", block_reset_start.elapsed());
 
     Ok(())
 }
