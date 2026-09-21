@@ -326,7 +326,8 @@ impl PciDevices {
             )?;
 
             info!(
-                "Reset PCI block device {}: total={:?} transport={:?} backend={:?}",
+                "Reset PCI block device '{}' at {}: total={:?} transport={:?} backend={:?}",
+                state.device_id(),
                 state.topology_desc(),
                 device_start.elapsed(),
                 transport_latency,

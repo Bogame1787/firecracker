@@ -961,4 +961,27 @@ mod tests {
             assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
         });
     }
+
+    #[test]
+    fn test_vmm_block_reset_entry_points() {
+        use std::num::Wrapping;
+
+        let (mut vmm, _files) = vmm_with_one_block();
+
+        let device_states = vmm.device_manager.save();
+        assert_eq!(device_states.mmio_state.block_devices.len(), 1);
+
+        with_live_block(&vmm, |b| {
+            b.queue_evts[0].write(1).unwrap();
+            b.queues[0].next_avail = Wrapping(4217);
+        });
+
+        vmm.prepare_block_reset().unwrap();
+        vmm.reset_block_devices(&device_states).unwrap();
+
+        with_live_block(&vmm, |b| {
+            assert_eq!(b.queue_evts[0].read().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+            assert_eq!(b.queues[0].next_avail, Wrapping(0));
+        });
+    }
 }

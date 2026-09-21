@@ -151,6 +151,7 @@ use crate::devices::virtio::rng::Entropy;
 use crate::devices::virtio::vsock::{Vsock, VsockUnixBackend};
 use crate::logger::{METRICS, MetricsError, error, info, warn};
 use crate::mmds::data_store::Mmds;
+use crate::device_manager::DevicesState;
 use crate::persist::{MicrovmState, MicrovmStateError, VmInfo};
 use crate::rate_limiter::BucketUpdate;
 use crate::resources::VmmConfig;
@@ -650,6 +651,36 @@ impl Vmm {
 
         Ok(())
     }
+
+    /// before memory reset
+    pub fn prepare_block_reset(&mut self) -> Result<(), MicrovmStateError> {
+        if self.device_manager.is_pci_enabled() {
+            self.device_manager.pci_devices.prepare_block_devices_reset()?;
+        } else {
+            self.device_manager.mmio_devices.prepare_block_devices_reset()?;
+        }
+        Ok(())
+    }
+
+    /// after memory reset
+    pub fn reset_block_devices(
+        &mut self,
+        device_states: &DevicesState,
+    ) -> Result<(), MicrovmStateError> {
+        let mem = self.vm.guest_memory().clone();
+
+        if self.device_manager.is_pci_enabled() {
+            self.device_manager
+                .pci_devices
+                .reset_block_devices(mem, &device_states.pci_state.block_devices)?;
+        } else {
+            self.device_manager
+                .mmio_devices
+                .reset_block_devices(mem, &device_states.mmio_state.block_devices)?;
+        }
+        Ok(())
+    }
+
     /// Dumps CPU configuration.
     pub fn dump_cpu_config(&mut self) -> Result<Vec<CpuConfiguration>, DumpCpuConfigError> {
         for handle in self.vcpus_handles.iter_mut() {

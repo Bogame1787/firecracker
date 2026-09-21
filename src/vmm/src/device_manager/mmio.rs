@@ -494,7 +494,8 @@ impl MMIODeviceManager {
             )?;
 
             info!(
-                "Reset MMIO block device {}: total={:?} transport={:?} backend={:?}",
+                "Reset MMIO block device '{}' at {}: total={:?} transport={:?} backend={:?}",
+                state.device_id(),
                 state.topology_desc(),
                 device_start.elapsed(),
                 transport_latency,

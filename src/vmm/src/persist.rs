@@ -140,6 +140,8 @@ pub enum MicrovmStateError {
     NotAllowed(String),
     /// Cannot restore devices: {0}
     RestoreDevices(#[from] DevicePersistError),
+    /// block reset failed: {0}
+    ResetBlockDevices(#[from] crate::device_manager::persist::ResetDevicesError),
     /// Cannot restore Vcpu state: {0}
     RestoreVcpuState(vstate::vcpu::VcpuError),
     /// Cannot save Vcpu state: {0}
