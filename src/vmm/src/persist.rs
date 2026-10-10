@@ -172,6 +172,10 @@ pub enum CreateSnapshotError {
     SerializeMicrovmState(#[from] crate::snapshot::SnapshotError),
     /// Cannot perform {0} on the snapshot backing file: {1}
     SnapshotBackingFile(&'static str, io::Error),
+    /// Failed to drain block io before taking the disk reference: {0}
+    PrepareBlockMark(MicrovmStateError),
+    /// Failed to take the disk reference point: {0}
+    BlockMark(crate::blk_control::BlkControlError),
 }
 
 /// Snapshot version
@@ -191,6 +195,20 @@ pub fn create_snapshot(
 
     vmm.vm
         .snapshot_memory_to_file(&params.mem_file_path, params.snapshot_type)?;
+
+    // The disk reference must be taken in this same paused window. The guest
+    // caches disk contents in its own RAM and a reset rewinds that cache, so a
+    // reference taken at any other point leaves the guest holding metadata for
+    // blocks the disk no longer has.
+    if let Some(socket) = params.block_control_socket.as_deref() {
+        // Drain in-flight writes first, or the reference misses writes the
+        // guest already believes are durable.
+        vmm.prepare_block_reset()
+            .map_err(CreateSnapshotError::PrepareBlockMark)?;
+        let micros =
+            crate::blk_control::mark(socket).map_err(CreateSnapshotError::BlockMark)?;
+        info!("Disk reference point took {} us.", micros);
+    }
 
     // We need to mark queues as dirty again for all activated devices. The reason we
     // do it here is that we don't mark pages as dirty during runtime
@@ -752,6 +770,8 @@ pub enum ResetSnapshotError {
     LoadNewState(SnapshotStateFromFileError),
     /// block prepare failed: {0}
     PrepareBlockReset(MicrovmStateError),
+    /// Failed to revert the disk: {0}
+    BlockRevert(crate::blk_control::BlkControlError),
     /// block reset failed: {0}
     ResetBlockDevices(MicrovmStateError),
 }
@@ -787,6 +807,13 @@ pub fn reset_to_snapshot(
         )
     );
 
+    // Revert the disk before guest memory is evicted, so a failed revert aborts
+    // before anything else has been touched.
+    if let Some(socket) = params.block_control_socket.as_deref() {
+        let micros =
+            crate::blk_control::reset(socket).map_err(ResetSnapshotError::BlockRevert)?;
+        info!("Disk revert took {} us.", micros);
+    }
 
     // Canonicalize mem and diff paths before sending to handler.
     let new_mem_path = match params.mem_file_path.try_exists() {

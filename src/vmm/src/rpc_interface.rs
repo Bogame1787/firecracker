@@ -1205,6 +1205,7 @@ mod tests {
                 snapshot_type: SnapshotType::Full,
                 snapshot_path: PathBuf::new(),
                 mem_file_path: PathBuf::new(),
+                block_control_socket: None,
             },
         )));
         check_unsupported(preboot_request(VmmAction::ResetSnapshot(
@@ -1213,6 +1214,7 @@ mod tests {
                 snapshot_path: PathBuf::new(),
                 mem_file_path: PathBuf::new(),
                 diff_file_path: PathBuf::new(),
+                block_control_socket: None,
             },
         )));
         #[cfg(target_arch = "x86_64")]

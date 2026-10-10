@@ -47,6 +47,14 @@ pub struct CreateSnapshotParams {
     pub snapshot_path: PathBuf,
     /// Path to the file that will contain the guest memory.
     pub mem_file_path: PathBuf,
+    /// Control socket of the daemon serving the block device's backing file.
+    ///
+    /// When given, the disk's reference point is taken in the same paused
+    /// window as the memory snapshot, so a later reset returns both to the
+    /// same instant. Absent means the disk is not captured, which is the
+    /// behaviour without a daemon attached.
+    #[serde(default)]
+    pub block_control_socket: Option<PathBuf>,
 }
 
 /// Allows for changing the mapping between tap devices and host devices
@@ -137,6 +145,12 @@ pub struct MemBackendConfig {
 pub struct ResetSnapshotParams {
     /// Path to the backend used to handle reset messages.
     pub reset_socket_path: PathBuf,
+    /// Control socket of the daemon serving the block device's backing file.
+    ///
+    /// When given, the disk is reverted alongside guest memory. Absent reverts
+    /// memory only, which leaves the previous guest's writes readable.
+    #[serde(default)]
+    pub block_control_socket: Option<PathBuf>,
     /// Path to the new snapshot file to reset to.
     pub snapshot_path: PathBuf,
     /// Path to the new mem_file to reset to.

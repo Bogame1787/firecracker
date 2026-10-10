@@ -74,6 +74,9 @@ pub mod rate_limiter;
 #[cfg(target_arch = "x86_64")]
 pub mod acpi;
 /// Handles setup and initialization a `Vmm` object.
+/// Client for the block daemon's control socket.
+pub mod blk_control;
+/// Handles setup, initialization, and runnning of a vm.
 pub mod builder;
 /// Types for guest configuration.
 pub mod cpu_config;
